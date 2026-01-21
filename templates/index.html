@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Powered GitHub Issue Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 AI-Powered GitHub Issue Assistant</h1>
+            <p class="subtitle">Analyze GitHub issues with AI-powered insights</p>
+        </header>
+
+        <main>
+            <section class="input-section">
+                <h2>Input Details</h2>
+                <form id="analyzeForm">
+                    <div class="form-group">
+                        <label for="repoUrl">
+                            GitHub Repository URL * 
+                            <span class="tooltip" data-tooltip="Enter the full GitHub repository URL (e.g., https://github.com/owner/repo). Works with public repositories only.">
+                                ℹ️
+                            </span>
+                        </label>
+                        <input 
+                            type="text" 
+                            id="repoUrl" 
+                            name="repoUrl" 
+                            placeholder="https://github.com/facebook/react"
+                            required
+                        >
+                        <small>Example: https://github.com/facebook/react</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="issueNumber">
+                            Issue Number * 
+                            <span class="tooltip" data-tooltip="Enter the issue number you want to analyze. You can find this in the issue URL (e.g., /issues/123).">
+                                ℹ️
+                            </span>
+                        </label>
+                        <input 
+                            type="number" 
+                            id="issueNumber" 
+                            name="issueNumber" 
+                            placeholder="123"
+                            min="1"
+                            required
+                        >
+                        <small>Enter the issue number (e.g., 123)</small>
+                    </div>
+
+                    <button type="submit" class="btn-primary" id="analyzeBtn">
+                        <span class="btn-text">Analyze Issue</span>
+                        <span class="spinner" id="spinner"></span>
+                    </button>
+                </form>
+            </section>
+
+            <section class="output-section" id="outputSection" style="display: none;">
+                <h2>Analysis Results</h2>
+                <div class="results-container" id="resultsContainer">
+                    <!-- Results will be inserted here -->
+                </div>
+            </section>
+
+            <section class="error-section" id="errorSection" style="display: none;">
+                <div class="error-message" id="errorMessage"></div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Built with ❤️ for Seedling Labs Engineering Intern Craft Case</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
