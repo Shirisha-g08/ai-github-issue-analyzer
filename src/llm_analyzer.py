@@ -21,16 +21,18 @@ class LLMAnalyzer:
         Uses Hugging Face's free inference API with multiple model fallbacks.
         """
         # Hugging Face Inference API endpoint (free tier)
-        # Updated to use newer, available models
+        # Updated to use newer, currently available models (January 2026)
         self.api_urls = [
-            "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3",
-            "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct",
-            "https://api-inference.huggingface.co/models/microsoft/Phi-3-mini-4k-instruct",
+            "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-7B-Instruct",
+            "https://api-inference.huggingface.co/models/meta-llama/Llama-3.2-3B-Instruct",
+            "https://api-inference.huggingface.co/models/google/gemma-2-2b-it",
+            "https://api-inference.huggingface.co/models/mistralai/Mistral-Nemo-Instruct-2407",
         ]
         self.api_url = self.api_urls[0]  # Start with first model
         
         # Optional: Use HF token for faster inference (but works without it)
-        self.hf_token = api_key or os.getenv('HF_TOKEN')
+        # Check both HUGGINGFACE_TOKEN (as documented) and HF_TOKEN for compatibility
+        self.hf_token = api_key or os.getenv('HUGGINGFACE_TOKEN') or os.getenv('HF_TOKEN')
         
         self.headers = {}
         if self.hf_token:
@@ -63,12 +65,13 @@ class LLMAnalyzer:
         prompt = self._create_analysis_prompt(issue_context)
         
         # Generate analysis using Hugging Face Inference API with fallback models
+        print(f"🔍 Starting issue analysis...")
         try:
             payload = {
                 "inputs": prompt,
                 "parameters": {
-                    "max_new_tokens": 800,  # Increased for more detailed summaries
-                    "temperature": 0.5,      # Lower for more consistent, focused output
+                    "max_new_tokens": 1200,  # Increased significantly for detailed paragraph summaries
+                    "temperature": 0.6,      # Slightly higher for more natural, flowing text
                     "return_full_text": False,
                     "top_p": 0.9
                 }
@@ -82,7 +85,7 @@ class LLMAnalyzer:
                         model_url,
                         headers=self.headers,
                         json=payload,
-                        timeout=30
+                        timeout=10
                     )
                     
                     if response.status_code == 200:
@@ -117,6 +120,7 @@ class LLMAnalyzer:
             
             # All models failed, use fallback
             print(f"❌ All LLM models failed (last error: {last_error}), using rule-based fallback")
+            print(f"📝 Generating rule-based analysis...")
             return self._fallback_analysis(issue)
             
         except Exception as e:
@@ -131,10 +135,13 @@ class LLMAnalyzer:
         """
         Prepare the issue context for the LLM.
         Handles edge cases like missing comments or very long bodies.
+        Includes comprehensive issue details for better summary generation.
         """
         title = issue.get('title', 'No title')
         body = issue.get('body', 'No description provided')
         state = issue.get('state', 'unknown')
+        created_at = issue.get('created_at', 'Unknown')
+        user = issue.get('user', {}).get('login', 'Unknown') if isinstance(issue.get('user'), dict) else str(issue.get('user', 'Unknown'))
         
         # Handle labels - they are already strings from GitHub API
         labels = issue.get('labels', [])
@@ -143,34 +150,41 @@ class LLMAnalyzer:
             labels = [label.get('name', '') for label in labels]
         
         comments_list = issue.get('comments_list', [])
+        comments_count = len(comments_list)
         
-        # Truncate body if too long (keep first 4000 chars for more context)
-        if body and len(body) > 4000:
-            body = body[:4000] + "\n\n... [truncated for length]"
+        # Truncate body if too long (keep first 5000 chars for more context)
+        if body and len(body) > 5000:
+            body = body[:5000] + "\n\n... [truncated for length]"
         
-        # Build context
+        # Build comprehensive context
         context = f"""
 Issue Title: {title}
 
+Issue Number: #{issue.get('number', 'Unknown')}
+
 Issue State: {state}
+
+Created By: {user}
+
+Created At: {created_at}
+
+Existing Labels: {', '.join(labels) if labels else 'None'}
 
 Issue Body:
 {body}
-
-Existing Labels: {', '.join(labels) if labels else 'None'}
 """
         
-        # Add comments if available
+        # Add comments if available with more context
         if comments_list:
-            # Limit to first 5 comments to avoid token limits
-            comments_preview = comments_list[:5]
-            comments_text = "\n".join([
-                f"Comment {i+1} by {c.get('user', 'unknown')}: {c.get('body', '')[:300]}"
+            # Limit to first 8 comments to provide better context
+            comments_preview = comments_list[:8]
+            comments_text = "\n\n".join([
+                f"Comment {i+1} by {c.get('user', 'unknown')}:\n{c.get('body', '')[:500]}"
                 for i, c in enumerate(comments_preview)
             ])
-            context += f"\nComments ({len(comments_list)} total, showing first {len(comments_preview)}):\n{comments_text}"
+            context += f"\n\nComments ({comments_count} total, showing first {len(comments_preview)}):\n{comments_text}"
         else:
-            context += "\nComments: No comments yet."
+            context += "\n\nComments: No comments yet."
         
         return context
     
@@ -178,22 +192,35 @@ Existing Labels: {', '.join(labels) if labels else 'None'}
         """
         Create a well-engineered prompt for the LLM.
         Uses few-shot prompting for better results.
+        Emphasizes detailed paragraph-style summaries.
         """
-        prompt = f"""You are an expert software engineer analyzing GitHub issues. Your task is to analyze the following GitHub issue and provide a structured analysis.
+        prompt = f"""You are an expert software engineer analyzing GitHub issues. Your task is to analyze the following GitHub issue and provide a structured analysis with a DETAILED, COMPREHENSIVE summary.
 
 {issue_context}
 
-CRITICAL INSTRUCTIONS FOR SUMMARY:
-1. DO NOT just repeat or rephrase the title
-2. READ the issue body and comments carefully
-3. EXPLAIN what the user is experiencing, what they tried, and what they need
-4. Write 2-4 complete sentences in PLAIN TEXT (no HTML, no markdown, no special formatting)
-5. Provide context that someone unfamiliar with the issue would understand
+CRITICAL INSTRUCTIONS FOR SUMMARY - THIS IS THE MOST IMPORTANT PART:
+1. Write a DETAILED PARAGRAPH (4-6 sentences minimum) that fully explains the issue
+2. DO NOT just repeat or rephrase the title - dig into the ACTUAL content
+3. READ and SYNTHESIZE information from:
+   - The issue title
+   - The complete issue body/description
+   - All provided comments
+   - Any technical details, error messages, or code snippets mentioned
+4. Your summary should answer:
+   - WHAT is the problem or request? (be specific)
+   - WHY is it happening? (root cause, if mentioned)
+   - WHO is affected? (users, developers, specific scenarios)
+   - HOW does it impact them? (consequences, workflows affected)
+   - WHAT is the desired outcome? (what should happen instead)
+5. Include specific technical details mentioned (versions, error messages, configuration, etc.)
+6. Write in PLAIN TEXT only (no HTML, no markdown formatting like ** or *, no special characters)
+7. Make it comprehensive enough that someone unfamiliar with the issue can fully understand it
+8. Use natural, flowing prose - write it like you're explaining to a colleague
 
 Analyze this issue and provide your response in the following JSON format:
 
 {{
-  "summary": "Write a detailed explanation here. Start by describing the problem or request in your own words based on the issue body, not just the title. Include relevant details about what causes it, how it affects users, and what outcome is desired. Use plain text only.",
+  "summary": "Write your detailed, comprehensive paragraph here. This should be 4-6 sentences that fully explain the issue based on ALL the information provided above. Include specific details from the issue body and comments. Explain the problem, its causes, its impact, and the desired resolution in a flowing paragraph format.",
   "type": "Classify as one of: bug, feature_request, documentation, question, or other",
   "priority_score": "A score from 1 (low) to 5 (critical) with justification",
   "suggested_labels": ["Array of 2-3 relevant labels"],
@@ -218,7 +245,7 @@ Example outputs:
 
 Example 1 - Bug:
 {{
-  "summary": "The application encounters a fatal error when users try to upload files exceeding 10MB in size. According to the issue description, the error occurs specifically during the file validation step, before the actual upload begins. Users report losing their file selection and having to restart the entire upload process. This is particularly problematic for users working with large media files, presentations, or datasets who depend on this functionality for their daily work.",
+  "summary": "The application encounters a fatal error when users attempt to upload files exceeding 10MB in size, causing the upload process to fail completely. According to the detailed issue description and user comments, the error occurs specifically during the file validation step before the actual upload begins, suggesting a problem with the file size validation logic or server configuration. Multiple users have reported that when this error occurs, they lose their file selection entirely and must restart the upload process from the beginning, which is particularly frustrating when dealing with large datasets. This issue is especially problematic for users working with large media files, presentations, scientific datasets, or backup archives who rely on this functionality as part of their daily workflow. The error appears to affect all file types equally once they exceed the 10MB threshold, and no workaround has been identified other than splitting files into smaller chunks.",
   "type": "bug",
   "priority_score": "4/5 - High priority: Critical functionality failure affecting file uploads, negative user experience",
   "suggested_labels": ["bug", "file-upload", "priority:high"],
@@ -227,18 +254,21 @@ Example 1 - Bug:
 
 Example 2 - Feature Request:
 {{
-  "summary": "The user is requesting the addition of a dark mode theme option for the application interface. They explain that prolonged use of the current light theme causes significant eye strain, especially when working late at night or in low-light environments. The user notes that this feature has become a standard expectation in modern applications and would greatly benefit users with light sensitivity or those who prefer reduced screen brightness during extended work sessions.",
+  "summary": "The user is requesting the addition of a comprehensive dark mode theme option for the entire application interface, which would provide a darker color scheme to reduce eye strain during extended usage periods. In their detailed explanation, they describe experiencing significant discomfort and fatigue when using the current light theme for prolonged periods, particularly when working late at night or in dimly lit environments where the bright interface creates harsh contrast. The user points out that dark mode has become a standard accessibility feature in modern applications across mobile and desktop platforms, and its absence is particularly noticeable given that many developers and power users who are the primary audience for this application often work during evening hours. Several commenters have echoed this request, with some mentioning that they currently use browser extensions or system-wide dark mode tools as workarounds, but these solutions don't integrate well with the application's specific design elements. The requested feature would ideally include options to switch between light and dark themes based on user preference or system settings, ensuring the application is more comfortable to use for people with light sensitivity and those who prefer reduced screen brightness during extended work sessions.",
   "type": "feature_request",
   "priority_score": "3/5 - Medium priority: Enhances user experience and accessibility, commonly requested feature",
   "suggested_labels": ["enhancement", "UI", "accessibility"],
   "potential_impact": "Not a bug - this is a feature request that would improve user experience"
 }}
 
-REMEMBER: 
-- Summary must be explanatory and detailed, NOT just a restatement of the title
-- Use information from the issue body and comments
+REMEMBER - CRITICAL REQUIREMENTS FOR SUMMARY: 
+- Summary MUST be a detailed paragraph of 4-6 sentences minimum
+- DO NOT just restate the title - deeply analyze the issue body and comments
+- Include specific technical details, error messages, versions, and context from the full issue
+- Explain the problem, its cause, its impact, and the desired resolution
 - Write in plain text without HTML tags or special formatting
-- Make it understandable to someone who hasn't read the issue
+- Make it comprehensive enough that someone who hasn't read the issue can fully understand it
+- Use natural, flowing language like you're explaining to a colleague
 
 Now analyze the issue above and respond with ONLY the JSON object, no additional text:"""
         
@@ -391,7 +421,7 @@ Now analyze the issue above and respond with ONLY the JSON object, no additional
             priority = 3
             justification = "Medium priority: moderate impact, should be addressed"
         
-        # Generate comprehensive summary from title and body
+        # Generate comprehensive paragraph-style summary from title and body
         summary_parts = []
         
         # Start with title (use original case but strip HTML)
@@ -405,27 +435,35 @@ Now analyze the issue above and respond with ONLY the JSON object, no additional
                     title_clean = title_clean + '.'
                 summary_parts.append(title_clean)
         
-        # Add context from body (first 1-2 sentences) - strip HTML
+        # Add comprehensive context from body - strip HTML and extract multiple sentences
         body_text = self._strip_html_tags(issue.get('body', ''))
         if body_text and len(body_text) > 20:
-            # Extract first meaningful sentence from body
-            sentences = body_text.split('.')[:2]
+            # Extract first 3-4 meaningful sentences from body for more comprehensive summary
+            sentences = [s.strip() for s in body_text.split('.') if s.strip()][:4]
             for sent in sentences:
-                sent = sent.strip()
-                if len(sent) > 15 and not sent.startswith('#'):  # Skip headers
-                    if not sent[0].isupper() if sent else False:
-                        sent = sent[0].upper() + sent[1:] if sent else sent
+                # Skip very short sentences and markdown headers
+                if len(sent) > 15 and not sent.startswith('#') and not sent.startswith('```'):
+                    # Capitalize first letter
+                    if sent and not sent[0].isupper():
+                        sent = sent[0].upper() + sent[1:]
                     if not sent.endswith('.'):
                         sent = sent + '.'
                     summary_parts.append(sent)
-                    break
         
-        # Combine parts
+        # Add impact/context based on issue type
+        if issue_type == 'bug':
+            summary_parts.append(f"This bug affects user workflows and needs investigation.")
+        elif issue_type == 'feature_request':
+            summary_parts.append(f"This enhancement would improve the overall user experience.")
+        
+        # Combine parts into a comprehensive paragraph
         if summary_parts:
-            summary = ' '.join(summary_parts[:3])  # Max 3 sentences
-            summary = summary[:500]  # Reasonable length limit
+            summary = ' '.join(summary_parts[:5])  # Max 5 sentences for a good paragraph
+            # Ensure reasonable length but allow longer summaries
+            if len(summary) > 1000:
+                summary = summary[:1000] + '...'
         else:
-            summary = "Issue requires attention and further investigation."
+            summary = "This issue requires attention and further investigation to understand the full scope and impact."
         
         # Suggest labels (2-3 labels as required)
         labels = [issue_type.replace('_', '-')]
