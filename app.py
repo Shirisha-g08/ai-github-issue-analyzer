@@ -61,6 +61,8 @@ def analyze_issue():
     Returns the required JSON format.
     """
     try:
+        print(f"\n📥 Received analysis request")
+        
         # Check if LLM analyzer is available
         if llm_analyzer is None:
             return jsonify({
@@ -71,6 +73,8 @@ def analyze_issue():
         data = request.json
         repo_url = data.get('repo_url', '').strip()
         issue_number = data.get('issue_number')
+        
+        print(f"📍 Repository: {repo_url}, Issue: {issue_number}")
         
         # Validation
         if not repo_url:
@@ -89,6 +93,8 @@ def analyze_issue():
         if not owner or not repo:
             return jsonify({'error': 'Invalid GitHub URL format. Expected: https://github.com/owner/repo'}), 400
         
+        print(f"✅ Parsed: {owner}/{repo} #{issue_number}")
+        
         # Get GitHub token (optional for public repos)
         token = os.getenv('GITHUB_TOKEN')
         
@@ -96,20 +102,26 @@ def analyze_issue():
         api = GitHubAPI(token=token, owner=owner, repo=repo)
         
         # Fetch issue
+        print(f"🔍 Fetching issue from GitHub...")
         issue = api.get_issue(issue_number)
         
         if not issue:
             return jsonify({'error': f'Issue #{issue_number} not found in {owner}/{repo}'}), 404
         
+        print(f"✅ Issue fetched: {issue.get('title', 'No title')[:50]}...")
+        
         # Fetch comments for the issue
         try:
             comments = api.get_issue_comments(issue_number)
             issue['comments_list'] = comments
-        except Exception:
+            print(f"💬 Fetched {len(comments)} comments")
+        except Exception as e:
             # If comments fail, continue without them
+            print(f"⚠️ Could not fetch comments: {e}")
             issue['comments_list'] = []
         
         # Analyze using LLM
+        print(f"🤖 Starting LLM analysis...")
         analysis = llm_analyzer.analyze_issue(issue)
         
         # Validate analysis result
@@ -118,6 +130,7 @@ def analyze_issue():
                 'error': 'Analysis returned invalid result. Please try again.'
             }), 500
         
+        print(f"✅ Analysis complete!")
         # Ensure required fields exist
         required_fields = ['summary', 'type', 'priority_score', 'suggested_labels']
         missing_fields = [field for field in required_fields if field not in analysis]
